@@ -46,6 +46,11 @@ query `tbphp/gpt-load` releases.
 - macOS Homebrew service: installed binary under the Homebrew prefix; persistent
   `DATA_DIR=$HOME/.demerzel`; external age identity at
   `$HOME/.config/demerzel/identity.txt`.
+- Homebrew pins its selected absolute root in
+  `$HOME/.config/demerzel/data-dir` and retains that path across upgrades.
+  Set `HOMEBREW_DEMERZEL_DATA_DIR` on first install only when deliberately
+  continuing an existing absolute path; later root changes are refused by the
+  formula.
 - Linux native install: persistent data under
   `${XDG_DATA_HOME:-$HOME/.local/share}/demerzel`; external identity under
   `$HOME/.config/demerzel/identity.txt`.
@@ -58,6 +63,10 @@ query `tbphp/gpt-load` releases.
 - Keep the same canonical absolute `DATA_DIR` for every restart, upgrade and
   rollback. Its canonical path participates in native-vault custody and the
   installation identity. A database alone is not a backup.
+- Existing development data under `./data` is not auto-migrated to the new
+  macOS/Linux defaults. Keep the old canonical absolute `DATA_DIR` explicitly
+  or use the supervised database-plus-custody restore/import runbook before
+  changing roots. Never copy or rotate age ciphertext by itself.
 - Preserve the database, `auth.key`, the matching Keychain/Secret Service item
   or the separate age identity plus `encryption.key.age`, and
   `runtime-state.checkpoint.json` as one recovery set. Uninstall preserves
