@@ -3,11 +3,14 @@ import { readAccessKeyRow, type AccessKeyRow } from './access-keys'
 import { readCredential, type CredentialRow } from './group-detail'
 import { readCredentialFilterKey } from './groups'
 import { integer, list, record, text } from './response'
+import { sortProtocols } from '@modern/i18n/protocols'
 
 export interface HomeKey {
   id: number
   name: string
   mask: string
+  protocols: string[]
+  models: string[]
 }
 export interface HomeBase {
   observedAt: number
@@ -48,6 +51,8 @@ export async function getHome(client: ApiClient, signal: AbortSignal): Promise<H
         id: integer(key.id, 1),
         name: text(key.name),
         mask: text(key.masked_key),
+        protocols: sortProtocols(list(key.protocols).map(text)),
+        models: list(key.models).map(text),
       }
     }),
     currentKey: data.current_access_key == null ? null : readAccessKeyRow(data.current_access_key),

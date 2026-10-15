@@ -14,7 +14,7 @@ Demerzel is distributed under the MIT Licence and is forked from [tbphp/gpt-load
 - **Fails over predictably.** Credential-scoped quota rejections advance the persisted account cursor. Model- or request-scoped limits do not move it; replay-safe requests may use another account for that request.
 - **Provides OpenAI-compatible endpoints.** Clients can use the supported Chat Completions and Responses protocols; Anthropic and Gemini adapters are also available.
 - **Includes a management UI and account CLI.** The browser UI manages channels, groups, keys and usage. Secret-bearing account commands use an owner-only Unix socket rather than a plain HTTP control endpoint.
-- **Connects OMP and OpenKai.** The home page generates OpenAI Responses-compatible provider configuration for both clients. Choose an access key that supports `openai-responses` and a model; keep `DEMERZEL_API_KEY` in the client's environment file, not in `models.yml`.
+- **Connects OMP and OpenKai.** The home-page OMP wizard sets up authenticated discovery of the chat models available to its access key rather than pinning one model. It keeps the key out of YAML and explains how to verify and switch models. OpenKai has a separate Responses configuration. See the [OMP setup guide](docs/demerzel/connect-omp.md).
 
 See the [visual architecture](docs/demerzel/architecture.html), [module contracts](docs/demerzel/module-contracts.md), [credential accounts guide](docs/demerzel/accounts.md) and [key-custody runbook](docs/demerzel/key-custody.md).
 
@@ -51,9 +51,9 @@ The first run creates management authentication material in `DATA_DIR/auth.key`.
 
 ### Connecting OMP and OpenKai
 
-In the home page, choose **OMP** or **OpenKai**, select an access key that permits the `openai-responses` protocol, and choose a model exposed by that key. Merge the generated `demerzel` provider entry into the existing `~/.omp/agent/models.yml`; do not replace other providers. Both clients use that OMP-compatible model file by default.
+In the home page, choose **OMP** and an access key permitting `openai-completions`. To aggregate every configured Chat Completions model, leave its group and model filters unrestricted. The wizard helps you replace an existing `demerzel` block (or insert a new one) in `~/.omp/agent/models.yml`, store `DEMERZEL_API_KEY` in `~/.omp/agent/.env`, then discover and switch models with `omp models demerzel` and `/model`. Custom file-based providers do not appear in `/login`; the browser cannot change OMP's local files. See the [step-by-step OMP guide](docs/demerzel/connect-omp.md).
 
-Store the key as `DEMERZEL_API_KEY` in `~/.omp/agent/.env` for OMP or `~/.openkai/.env` for OpenKai. Keep those files owner-only. The generated model YAML contains only the environment-variable name; the key is copied separately or included only when the explicit environment-file copy action is used.
+For **OpenKai**, the separate connection snippet currently uses `openai-responses` and a selected model. It reads `~/.omp/agent/models.yml` by default: do not append a second `demerzel` mapping with a conflicting wire format. Use a separate profile/configuration when the two clients need different provider entries, and keep all keys outside the YAML.
 
 ## Runtime and recovery
 
@@ -93,6 +93,7 @@ make check     # Run formatting, static checks, web validation, build and Go tes
 
 - [macOS install and Homebrew status](docs/demerzel/install-macos.md)
 - [Linux install and signed `curl` procedure](docs/demerzel/install-linux.md)
+- [OMP guided connection and troubleshooting](docs/demerzel/connect-omp.md)
 - [Credential accounts](docs/demerzel/accounts.md)
 - [Key custody and recovery](docs/demerzel/key-custody.md)
 - [Module contracts](docs/demerzel/module-contracts.md)

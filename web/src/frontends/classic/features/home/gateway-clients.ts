@@ -114,6 +114,10 @@ export const gatewayClients: readonly GatewayClient[] = [
     searchTerms: ['openai', 'cli'],
     requiredProtocol: 'openai-responses',
   },
+  /**
+   * OMP uses the guided three-stage setup and discovers every model the access
+   * key can route, so it requires the chat protocol but pins no model.
+   */
   {
     id: 'omp',
     kind: 'commandLine',
@@ -122,8 +126,7 @@ export const gatewayClients: readonly GatewayClient[] = [
     icon: 'omp',
     mark: 'OM',
     searchTerms: ['oh-my-pi', 'oh my pi'],
-    requiredProtocol: 'openai-responses',
-    requiresModel: true,
+    requiredProtocol: 'openai-completions',
   },
   {
     id: 'openkai',
@@ -330,19 +333,9 @@ export function clientConfiguration(
         'wire_api = "responses"',
       ].join('\n')
     case 'omp':
-    case 'openkai': {
-      const selectedModel = model.trim() || 'YOUR_MODEL'
-      return [
-        'providers:',
-        '  demerzel:',
-        `    baseUrl: ${JSON.stringify(openAIBaseURL(origin))}`,
-        '    apiKey: DEMERZEL_API_KEY',
-        '    api: openai-responses',
-        '    models:',
-        `      - id: ${JSON.stringify(selectedModel)}`,
-        `        name: ${JSON.stringify(selectedModel)}`,
-      ].join('\n')
-    }
+      return ompDiscoveryProviderYAML(origin)
+    case 'openkai':
+      return agentProviderYAML(origin, model, 'openai-responses')
     case 'nextchat':
       return JSON.stringify({ url: origin, key }, null, 2)
     case 'cherry-studio':
@@ -472,6 +465,42 @@ function ccSwitchEndpoint(origin: string, target: CCSwitchTargetID): string {
 
 function openAIBaseURL(origin: string): string {
   return `${origin.replace(/\/+$/, '')}/v1`
+}
+
+/** Provider block pinning one explicit model (OpenKai); the secret stays in the environment file. */
+function agentProviderYAML(
+  origin: string,
+  model: string,
+  api: 'openai-completions' | 'openai-responses',
+): string {
+  const selectedModel = model.trim() || 'YOUR_MODEL'
+  return [
+    'providers:',
+    '  demerzel:',
+    `    baseUrl: ${JSON.stringify(openAIBaseURL(origin))}`,
+    '    apiKey: DEMERZEL_API_KEY',
+    `    api: ${api}`,
+    '    models:',
+    `      - id: ${JSON.stringify(selectedModel)}`,
+    `        name: ${JSON.stringify(selectedModel)}`,
+  ].join('\n')
+}
+
+/**
+ * OMP aggregates the gateway: it discovers every model the access key can route
+ * through the OpenAI models list, so the block pins no model and holds no
+ * secret; the key is read from DEMERZEL_API_KEY in the environment file.
+ */
+function ompDiscoveryProviderYAML(origin: string): string {
+  return [
+    'providers:',
+    '  demerzel:',
+    `    baseUrl: ${JSON.stringify(openAIBaseURL(origin))}`,
+    '    apiKey: DEMERZEL_API_KEY',
+    '    api: openai-completions',
+    '    discovery:',
+    '      type: openai-models-list',
+  ].join('\n')
 }
 
 function encodeURLSafeBase64(value: string): string {

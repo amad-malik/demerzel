@@ -13,7 +13,7 @@ export const gatewayClients = [
     id: 'omp',
     name: 'OMP',
     icon: 'omp',
-    protocol: 'openai-responses',
+    protocol: 'openai-completions',
     kind: 'snippet',
     surface: 'cli',
     group: 'cli',
@@ -164,8 +164,27 @@ export function gatewayConfiguration(config: GatewayConfig, key: string): Config
         { label: 'shell', content: env('GPT_LOAD_API_KEY', key), requiresKey: true },
       ]
     case 'omp':
-    case 'openkai': {
-      const envPath = config.client === 'omp' ? '~/.omp/agent/.env' : '~/.openkai/.env'
+      // OMP discovers the gateway's models itself, so this block pins no model name.
+      return [
+        {
+          label: '~/.omp/agent/models.yml',
+          content: [
+            'providers:',
+            '  demerzel:',
+            `    baseUrl: ${JSON.stringify(endpoint)}`,
+            '    apiKey: DEMERZEL_API_KEY',
+            '    api: openai-completions',
+            '    discovery:',
+            '      type: openai-models-list',
+          ].join('\n'),
+        },
+        {
+          label: '~/.omp/agent/.env',
+          content: `DEMERZEL_API_KEY=${JSON.stringify(key)}`,
+          requiresKey: true,
+        },
+      ]
+    case 'openkai':
       return [
         {
           label: '~/.omp/agent/models.yml',
@@ -181,12 +200,11 @@ export function gatewayConfiguration(config: GatewayConfig, key: string): Config
           ].join('\n'),
         },
         {
-          label: envPath,
+          label: '~/.openkai/.env',
           content: `DEMERZEL_API_KEY=${JSON.stringify(key)}`,
           requiresKey: true,
         },
       ]
-    }
     case 'claude-code':
       return [
         {
@@ -289,6 +307,7 @@ const modelFreeClients: readonly string[] = [
   'gemini-cli',
   'new-api',
   'nextchat',
+  'omp',
   'open-webui',
   'cherry-studio',
 ]

@@ -333,8 +333,6 @@ export default {
         copyConfiguration: 'Copy configuration',
         copyConnectionInfo: 'Copy connection info',
         copyImportParameters: 'Copy import parameters',
-        copied: 'Copied',
-        copyFailed: 'Unable to copy configuration.',
         keyCopied: 'Access key copied',
         keyCopyFailed: 'Unable to copy the access key.',
         configurationCopied: 'Configuration copied',
@@ -395,11 +393,6 @@ export default {
             s1: 'Add the content above to ~/.codex/config.toml',
             s2: 'Copy the access key and set it as GPT_LOAD_API_KEY in the Codex shell',
             s3: 'This custom provider uses the Responses API',
-          },
-          omp: {
-            s1: 'Add the Demerzel OpenAI Responses-compatible endpoint and provider to ~/.omp/agent/models.yml without removing existing entries.',
-            s2: 'Set DEMERZEL_API_KEY in ~/.omp/agent/.env. Keep secrets out of models.yml.',
-            s3: 'Start OMP after saving the configuration.',
           },
           openkai: {
             s1: 'Configure the Demerzel OpenAI Responses-compatible endpoint and provider in OpenKai.',
@@ -467,6 +460,59 @@ export default {
           claude: 'Claude Code',
           gemini: 'Gemini CLI',
           opencode: 'OpenCode',
+        },
+        ompSetup: {
+          stagesLabel: 'OMP setup stages',
+          progress: 'Step {current} of {total}',
+          next: 'Next',
+          back: 'Back',
+          stageTitles: {
+            select: 'Access key',
+            configure: 'Configuration',
+            verify: 'Verification',
+          },
+          select: {
+            heading: 'Choose the access key OMP will call',
+            lead: 'Demerzel aggregates many models behind one gateway address. OMP discovers every model this access key can route through the OpenAI models list, so nothing is pinned here and the catalogue refreshes as the gateway changes. The key must expose openai-completions and at least one model.',
+            keyCaption: 'Access key',
+            keySupported: '{key} exposes openai-completions',
+            modelsCaption: 'Models',
+            modelsExposed:
+              'This key exposes {count} chat model(s); OMP discovers them dynamically and lists each one as demerzel/<model-id>',
+            noModels:
+              'This access key exposes no chat models. Use a key that can route at least one model before continuing.',
+          },
+          configure: {
+            heading: 'Save two files on the machine that runs OMP',
+            lead: 'A browser cannot write to your machine. Copy each block, then save it yourself.',
+            modelsFile: '~/.omp/agent/models.yml',
+            modelsCaption: 'Provider block · holds no secret and names no model',
+            modelsHint:
+              'If models.yml already contains a demerzel block, replace that block — a second demerzel key under providers: would duplicate the YAML key. Otherwise merge this into the existing providers: mapping and keep every other provider OMP can reach.',
+            copyModels: 'Copy provider YAML',
+            envFile: '~/.omp/agent/.env',
+            envCaption: 'Secret · never written into models.yml',
+            envValue: 'DEMERZEL_API_KEY=••••••••••••',
+            envHint:
+              'apiKey: DEMERZEL_API_KEY names an environment variable. When that variable is unset, OMP falls back to sending the literal name as the key and every request fails with 401.',
+            copyEnv: 'Copy environment line with the real key',
+            envSecretNote: 'The copied line holds the real key; it is never shown on this page.',
+            envCopied: 'Environment line copied',
+            envCopyFailed: 'Unable to copy the environment line.',
+          },
+          verify: {
+            heading: 'Confirm the provider from a terminal',
+            lead: 'Save both files, start OMP again, then list what the provider exposes; OMP rediscovers the models as the gateway catalogue changes.',
+            copyCommands: 'Copy verification command',
+            commandsCopied: 'Verification command copied',
+            commandsCopyFailed: 'Unable to copy the verification command.',
+            modelSelection:
+              'Inside OMP, run /model and choose any discovered model; each one is listed as demerzel/<model-id>.',
+            loginHint:
+              'A custom provider never appears under /login or in first-run setup; /login only signs in to the built-in subscription services.',
+            emptyListHint:
+              'If nothing is listed, the provider block is missing from models.yml or DEMERZEL_API_KEY is unset in ~/.omp/agent/.env.',
+          },
         },
       },
     },

@@ -246,6 +246,24 @@ func TestReadAccessKeyHomeBaseScopesInventoryToRoutableModels(t *testing.T) {
 		result.CurrentAccessKey == nil || result.CurrentAccessKey.ID != created.ID {
 		t.Fatalf("ReadAccessKeyHomeBase() = %#v", result)
 	}
+	admin, err := fixture.service.ReadHomeBase(
+		t.Context(),
+		time.Date(2026, time.August, 8, 20, 0, 0, 0, time.UTC).UnixMilli(),
+	)
+	if err != nil {
+		t.Fatalf("ReadHomeBase() error = %v", err)
+	}
+	for _, key := range admin.AccessKeys {
+		if key.ID != created.ID {
+			continue
+		}
+		if !reflect.DeepEqual(key.Protocols, []protocol.Protocol{protocol.OpenAICompletions}) ||
+			!reflect.DeepEqual(key.Models, []string{"client-allowed"}) {
+			t.Fatalf("admin home exposes models outside the access key's scope: %#v", key)
+		}
+		return
+	}
+	t.Fatal("scoped access key missing from admin home")
 }
 
 func TestReadHomeBaseFailsClosed(t *testing.T) {

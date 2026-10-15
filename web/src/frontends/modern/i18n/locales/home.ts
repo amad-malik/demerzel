@@ -106,9 +106,41 @@ export const enGB = {
     cline: 'Select OpenAI Compatible, then enter the URL, key and model name.',
     'new-api': 'Import this connection in channel management, then choose the models to enable.',
     curl: 'Enter a model name and run the copied command in a terminal.',
-    omp: 'Add the Demerzel OpenAI Responses-compatible endpoint and provider to ~/.omp/agent/models.yml without removing existing entries. Set DEMERZEL_API_KEY in ~/.omp/agent/.env; do not put secrets in models.yml.',
+    omp: 'Follow three steps: choose an access key permitted for Chat Completions, merge the provider configuration so OMP discovers every model that key exposes, then verify the connection.',
     openkai:
       'Configure the Demerzel OpenAI Responses-compatible endpoint and provider in OpenKai. Set DEMERZEL_API_KEY in ~/.openkai/.env or the shell environment used to start OpenKai.',
+  },
+  omp: {
+    title: 'OMP setup',
+    progressLabel: 'Setup step',
+    progress: 'Step {step} of {total}',
+    steps: {
+      selection: 'Selection',
+      configuration: 'Configuration',
+      verification: 'Verification',
+    },
+    selectHelp:
+      'Choose an access key permitted for openai-completions. OMP discovers the models that key exposes, so no model is pinned in the configuration.',
+    keyUnsupported:
+      'This access key cannot serve openai-completions requests. Choose another key, or widen its protocol scope under Manage access keys.',
+    keyUnsupportedOption: '{mask} · no openai-completions',
+    keyModels: '{mask} · {count} models',
+    modelCount: '{count} models available through this key',
+    noModels:
+      'This access key exposes no models. Widen its group or model scope, or choose another key.',
+    discoveryHelp:
+      'Demerzel aggregates every model configured behind this gateway. The provider block below turns on OMP discovery, so OMP reads the model list from Demerzel and refreshes it as routes change.',
+    configHelp:
+      'Replace any existing demerzel block in ~/.omp/agent/models.yml with this one, or add it under providers: alongside your other providers. Then store the key separately in ~/.omp/agent/.env.',
+    secretHelp:
+      'The YAML stays key-free: apiKey names the DEMERZEL_API_KEY environment variable. Copy the separate ~/.omp/agent/.env step to provide it without displaying the real key here. If OMP has no variable by that name, it sends the literal name and requests fail with 401.',
+    verifyHelp:
+      'Once both files are saved, list the models OMP discovered from a terminal, then choose any of them inside OMP.',
+    pickModel: 'Run /model inside OMP and choose any demerzel model',
+    loginHelp:
+      'Custom providers never appear in /login or the first-run setup, which only cover built-in subscriptions. OMP discovers Demerzel from models.yml and lists every model it found under demerzel/ in /model.',
+    next: 'Next',
+    back: 'Back',
   },
   viewAll: 'View all',
   recoversIn: 'Resets in {time}',

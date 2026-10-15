@@ -4,11 +4,20 @@ import { useI18n } from 'vue-i18n'
 import { AppButton, AppCopyValue, AppOverflowText } from '@modern/components/ui'
 import type { ConfigBlock } from './gateway-config'
 
+interface TerminalBlock extends ConfigBlock {
+  /** Resolves the copy payload on demand; only blocks that reveal a secret need it. */
+  resolve?: () => Promise<string>
+  /** Pre-translated heading; falls back to the label-based headings when absent. */
+  heading?: string
+}
 defineProps<{
-  blocks: (ConfigBlock & { resolve: () => Promise<string> })[]
+  blocks: TerminalBlock[]
   copyable: boolean
 }>()
 const { t, n } = useI18n()
+function blockAriaLabel(block: TerminalBlock): string {
+  return block.heading ?? (block.label === 'shell' ? t('home.terminal') : block.label)
+}
 </script>
 
 <template>
@@ -17,7 +26,8 @@ const { t, n } = useI18n()
       <div class="modern-connect-step-heading">
         <span class="modern-connect-step-number" aria-hidden="true">{{ n(index + 1) }}</span>
         <h3>
-          <template v-if="block.label === 'shell'">{{ t('home.runInTerminal') }}</template>
+          <template v-if="block.heading">{{ block.heading }}</template>
+          <template v-else-if="block.label === 'shell'">{{ t('home.runInTerminal') }}</template>
           <template v-else>
             <span>{{ t('home.writeConfig') }}</span>
             <AppOverflowText class="modern-connect-step-path" :text="block.label" />
@@ -37,10 +47,7 @@ const { t, n } = useI18n()
           </template>
         </AppCopyValue>
       </div>
-      <pre
-        tabindex="0"
-        :aria-label="block.label === 'shell' ? t('home.terminal') : block.label"
-      ><code>{{ block.content }}</code></pre>
+      <pre tabindex="0" :aria-label="blockAriaLabel(block)"><code>{{ block.content }}</code></pre>
     </li>
   </ol>
 </template>

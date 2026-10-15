@@ -16,8 +16,10 @@ import {
   AppConfirmDialog,
   AppCopyValue,
   AppNotice,
+  AppOverflowText,
   AppPanel,
   AppSearchSelect,
+  AppSegmentedControl,
   AppSelect,
 } from '@modern/components/ui'
 import {
@@ -37,7 +39,7 @@ import ConnectTerminal from './ConnectTerminal.vue'
 import { readGatewayPreferences, rememberGatewayPreferences } from './gateway-preferences'
 
 const props = defineProps<{ keys: HomeKey[]; admin: boolean }>()
-const { t } = useI18n()
+const { t, n } = useI18n()
 const client = useApiClient()
 const session = useAuthSession()
 const messages = useMessages()
@@ -72,10 +74,15 @@ const selectedClient = computed(() =>
 const target = ref<GatewayConfig['target']>(remembered.target)
 const model = ref(remembered.model)
 const selectedTarget = computed(() => gatewayTargets.find((item) => item.id === target.value)!)
+// Vite serves the app in development, so generated configs must name the gateway the dev
+// server proxies to; the browser origin is only correct once the app is built.
+const gatewayOrigin = import.meta.env.DEV
+  ? String(import.meta.env.VITE_DEV_PROXY_TARGET || 'http://127.0.0.1:3001')
+  : window.location.origin
 const config = computed<GatewayConfig>(() => ({
   client: selectedClient.value.id,
   target: target.value,
-  origin: window.location.origin,
+  origin: gatewayOrigin,
   model: model.value,
   name: 'Demerzel' + (key.value ? ' · ' + key.value.name : ''),
 }))
@@ -91,6 +98,58 @@ const targetOptions = gatewayTargets.map((target) => ({ value: target.id, label:
 const quickImport = computed(() => ['cc-switch', 'cherry-studio'].includes(selectedClient.value.id))
 const needsModel = computed(() => gatewayNeedsModel(selectedClient.value.id, target.value))
 const missingModel = computed(() => needsModel.value && !model.value.trim())
+const isOmp = computed(() => selectedClient.value.id === 'omp')
+const keySupportsOmp = computed(
+  () => key.value?.protocols.includes(selectedClient.value.protocol) ?? false,
+)
+const ompModelCount = computed(() => key.value?.models.length ?? 0)
+// The guided OMP path is ready once the selected key is permitted on the client's wire
+// protocol and exposes at least one model. OMP lists the models itself, so the wizard
+// never asks for one.
+const ompReady = computed(
+  () => Boolean(key.value) && keySupportsOmp.value && ompModelCount.value > 0,
+)
+const ompStep = ref(1)
+const connectContent = ref<HTMLElement | null>(null)
+const ompStepModel = computed({
+  get: () => String(ompStep.value),
+  set: (value: string) => {
+    ompStep.value = Number(value)
+  },
+})
+const ompStepOptions = computed(() => [
+  { value: '1', label: t('home.omp.steps.selection') },
+  { value: '2', label: t('home.omp.steps.configuration'), disabled: !ompReady.value },
+  { value: '3', label: t('home.omp.steps.verification'), disabled: !ompReady.value },
+])
+const ompKeyOptions = computed(() =>
+  props.keys.map((entry) => ({
+    value: String(entry.id),
+    label: entry.name,
+    description: entry.protocols.includes(selectedClient.value.protocol)
+      ? t('home.omp.keyModels', { mask: entry.mask, count: n(entry.models.length) })
+      : t('home.omp.keyUnsupportedOption', { mask: entry.mask }),
+  })),
+)
+// Verification lists what OMP discovered; the user picks a model inside OMP, not here.
+const verifyBlocks = computed(() => [
+  { label: 'shell', content: 'omp models demerzel' },
+  { label: 'model', heading: t('home.omp.pickModel'), content: '/model' },
+])
+// A new selection restarts the wizard. The user advances only after reviewing it.
+watch([() => selectedClient.value.id, () => key.value?.id], () => {
+  ompStep.value = 1
+})
+watch(ompReady, (ready) => {
+  if (!ready) ompStep.value = 1
+})
+watch(
+  ompStep,
+  () => {
+    if (connectContent.value) connectContent.value.scrollTop = 0
+  },
+  { flush: 'post' },
+)
 const importModelMissing = computed(
   () =>
     selectedClient.value.id === 'cc-switch' &&
@@ -197,7 +256,9 @@ async function importClient(): Promise<void> {
         />
         <div class="modern-connect-main">
           <div
-            v-if="admin || selectedClient.id === 'cc-switch' || needsModel || quickImport"
+            v-if="
+              !isOmp && (admin || selectedClient.id === 'cc-switch' || needsModel || quickImport)
+            "
             class="modern-connect-controls"
           >
             <AppSearchSelect
@@ -237,7 +298,7 @@ async function importClient(): Promise<void> {
               >{{ t('home.importAction') }}</AppButton
             >
           </div>
-          <div class="modern-connect-content">
+          <div ref="connectContent" class="modern-connect-content">
             <AppNotice v-if="!key" tone="info">
               {{ t('home.noKeys') }}
               <AppButton v-if="admin" as-child variant="text" size="xs">
@@ -247,8 +308,71 @@ async function importClient(): Promise<void> {
               </AppButton>
             </AppNotice>
             <p class="modern-connect-instruction">{{ t('home.steps.' + selectedClient.id) }}</p>
+            <section v-if="isOmp" class="modern-omp" :aria-label="t('home.omp.title')">
+              <header class="modern-omp-header">
+                <AppSegmentedControl
+                  v-model="ompStepModel"
+                  :label="t('home.omp.progressLabel')"
+                  :options="ompStepOptions"
+                  appearance="field"
+                  size="xs"
+                />
+                <span class="modern-omp-progress">{{
+                  t('home.omp.progress', { step: n(ompStep), total: n(3) })
+                }}</span>
+              </header>
+              <div v-if="ompStep === 1" class="modern-omp-stage">
+                <p class="modern-connect-instruction">{{ t('home.omp.selectHelp') }}</p>
+                <AppSearchSelect
+                  v-if="admin"
+                  v-model="selectedKey"
+                  :label="t('home.accessKey')"
+                  :options="ompKeyOptions"
+                  size="xs"
+                />
+                <p v-else-if="key" class="modern-omp-key">
+                  <span>{{ t('home.accessKey') }}</span>
+                  <AppOverflowText :text="`${key.name} · ${key.mask}`" />
+                </p>
+                <AppNotice v-if="key && !keySupportsOmp" tone="warning">
+                  {{ t('home.omp.keyUnsupported') }}
+                </AppNotice>
+                <AppNotice v-else-if="key && !ompModelCount" tone="warning">
+                  {{ t('home.omp.noModels') }}
+                </AppNotice>
+                <template v-else-if="key">
+                  <p class="modern-connect-instruction">
+                    {{ t('home.omp.modelCount', { count: n(ompModelCount) }) }}
+                  </p>
+                  <AppNotice>{{ t('home.omp.discoveryHelp') }}</AppNotice>
+                </template>
+              </div>
+              <div v-else-if="ompStep === 2" class="modern-omp-stage">
+                <p class="modern-connect-instruction">{{ t('home.omp.configHelp') }}</p>
+                <ConnectTerminal :key="signature" :blocks="blocks" :copyable="ompReady" />
+                <AppNotice>{{ t('home.omp.secretHelp') }}</AppNotice>
+              </div>
+              <div v-else class="modern-omp-stage">
+                <p class="modern-connect-instruction">{{ t('home.omp.verifyHelp') }}</p>
+                <ConnectTerminal :key="signature" :blocks="verifyBlocks" :copyable="ompReady" />
+                <AppNotice>{{ t('home.omp.loginHelp') }}</AppNotice>
+              </div>
+              <footer class="modern-omp-actions">
+                <AppButton v-if="ompStep > 1" size="xs" @click="ompStep -= 1">{{
+                  t('home.omp.back')
+                }}</AppButton>
+                <AppButton
+                  v-if="ompStep < 3"
+                  variant="primary"
+                  size="xs"
+                  :disabled="!ompReady"
+                  @click="ompStep += 1"
+                  >{{ t('home.omp.next') }}</AppButton
+                >
+              </footer>
+            </section>
             <ConnectTerminal
-              v-if="isTerminal"
+              v-else-if="isTerminal"
               :key="signature"
               :blocks="blocks"
               :copyable="Boolean(key) && !missingModel"
@@ -395,6 +519,45 @@ async function importClient(): Promise<void> {
   font-family: var(--modern-font-mono);
   font-size: var(--modern-font-size-small);
   line-height: var(--modern-leading-body);
+}
+.modern-omp {
+  display: grid;
+  align-content: start;
+  gap: var(--modern-space-3);
+  min-width: 0;
+}
+.modern-omp-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--modern-space-2);
+}
+.modern-omp-progress {
+  color: var(--modern-muted);
+  font-size: var(--modern-font-size-small);
+}
+.modern-omp-stage {
+  display: grid;
+  align-content: start;
+  gap: var(--modern-space-3);
+  min-width: 0;
+}
+.modern-omp-key {
+  display: flex;
+  align-items: center;
+  gap: var(--modern-space-2);
+  min-width: 0;
+  color: var(--modern-muted);
+  font-size: var(--modern-font-size-small);
+}
+.modern-omp-key > span {
+  flex: none;
+}
+.modern-omp-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--modern-space-2);
 }
 @container modern-connect (max-width: 620px) {
   .modern-connect-split {

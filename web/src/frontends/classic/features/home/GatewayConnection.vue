@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Zap } from '@lucide/vue'
+import { ArrowLeft, ArrowRight, Zap } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
@@ -48,7 +48,8 @@ const emit = defineEmits<{
   'update:clientId': [id: GatewayClientID]
 }>()
 
-type ActionTarget = 'key' | 'configuration' | 'quick-import' | 'baseUrl' | 'apiKey'
+type ActionTarget =
+  'key' | 'configuration' | 'quick-import' | 'baseUrl' | 'apiKey' | 'omp-env' | 'omp-commands'
 type FeedbackKind = 'success' | 'failure' | 'popup-blocked'
 
 interface OperationIdentity {
@@ -72,13 +73,22 @@ const actionBusy = ref(false)
 const quickImportConfirmationOpen = ref(false)
 const ccSwitchTargetID = ref<CCSwitchTargetID>('claude')
 const clientModel = ref('')
+const ompStages = ['select', 'configure', 'verify'] as const
+const ompStage = ref(1)
 let resetTimer: number | undefined
 let actionController: AbortController | undefined
 let operationSequence = 0
 let activeOperationID = 0
 let unmounted = false
 
-const origin = window.location.origin
+/**
+ * Under the Vite dev server the browser origin serves the UI rather than the
+ * gateway, so generated configurations must point at the same backend target
+ * the dev proxy uses; production keeps the origin that served the page.
+ */
+const origin: string = import.meta.env.DEV
+  ? (import.meta.env.VITE_DEV_PROXY_TARGET as string | undefined) || 'http://127.0.0.1:3001'
+  : window.location.origin
 const selectedKey = computed(
   () => props.accessKeys.find((accessKey) => accessKey.id === selectedKeyID.value) ?? null,
 )
@@ -141,8 +151,20 @@ const clientFieldList = computed(() => {
   return clientFields(activeClient.value, origin, accessKey.masked_key)
 })
 
-function fieldCopyState(id: ActionTarget): 'idle' | 'success' {
-  return visibleFeedback.value?.target === id && visibleFeedback.value.kind === 'success'
+const ompSetupActive = computed(() => activeClient.value === 'omp')
+/** OMP discovers its models dynamically; the key only has to expose at least one. */
+const ompExposedModelCount = computed(() => selectedKey.value?.models.length ?? 0)
+const ompSelectionReady = computed(
+  () => selectedKeySupportsClient.value && ompExposedModelCount.value > 0,
+)
+const ompVerificationCommand = 'omp models demerzel'
+/** OMP has no model picker; the other model-bound clients choose one in the shared row. */
+const sharedModelOptions = computed(
+  () => activeClient.value === 'cc-switch' || currentClient.value.requiresModel === true,
+)
+
+function copyStateFor(target: ActionTarget): 'idle' | 'success' {
+  return visibleFeedback.value?.target === target && visibleFeedback.value.kind === 'success'
     ? 'success'
     : 'idle'
 }
@@ -206,6 +228,20 @@ const feedbackMessage = computed(() => {
       ? t('home.ledger.connection.fieldCopied', { field })
       : t('home.ledger.connection.fieldCopyFailed', { field })
   }
+  if (current.target === 'omp-env') {
+    return t(
+      current.kind === 'success'
+        ? 'home.ledger.connection.ompSetup.configure.envCopied'
+        : 'home.ledger.connection.ompSetup.configure.envCopyFailed',
+    )
+  }
+  if (current.target === 'omp-commands') {
+    return t(
+      current.kind === 'success'
+        ? 'home.ledger.connection.ompSetup.verify.commandsCopied'
+        : 'home.ledger.connection.ompSetup.verify.commandsCopyFailed',
+    )
+  }
   if (current.kind === 'success') {
     return t('home.ledger.connection.quickImportRequested', {
       client: quickImportClientLabel.value,
@@ -216,16 +252,10 @@ const feedbackMessage = computed(() => {
   }
   return t('home.ledger.connection.quickImportFailed', { client: quickImportClientLabel.value })
 })
-const configurationCopyState = computed(() =>
-  visibleFeedback.value?.target === 'configuration' && visibleFeedback.value.kind === 'success'
-    ? 'success'
-    : 'idle',
-)
-const keyCopyState = computed(() =>
-  visibleFeedback.value?.target === 'key' && visibleFeedback.value.kind === 'success'
-    ? 'success'
-    : 'idle',
-)
+const configurationCopyState = computed(() => copyStateFor('configuration'))
+const keyCopyState = computed(() => copyStateFor('key'))
+const ompEnvironmentCopyState = computed(() => copyStateFor('omp-env'))
+const ompCommandsCopyState = computed(() => copyStateFor('omp-commands'))
 
 function selectedClientLabel(clientID: GatewayClientID): string {
   return t(`home.ledger.connection.clients.${clientID}`)
@@ -315,6 +345,7 @@ watch(
     if (value === previous) return
     invalidateSensitiveAction()
     quickImportConfirmationOpen.value = false
+    ompStage.value = 1
     clientModel.value = preferredGPTModel(selectedKey.value?.models ?? [])
     selectFirstSupportedCCSwitchTarget()
   },
@@ -325,6 +356,11 @@ watch(activeClient, (value, previous) => {
   if (value === previous) return
   invalidateSensitiveAction()
   quickImportConfirmationOpen.value = false
+  ompStage.value = 1
+})
+
+watch(ompSelectionReady, (ready) => {
+  if (!ready) ompStage.value = 1
 })
 
 watch(
@@ -428,6 +464,7 @@ async function copyAccessKey(): Promise<void> {
 async function copyClientConfiguration(): Promise<void> {
   const clientID = activeClient.value
   if (!selectedKeySupportsClient.value) return
+  if (modelSelectionRequired.value && !clientModel.value.trim()) return
 
   if (clientID === 'codex' || clientID === 'omp' || clientID === 'openkai') {
     try {
@@ -457,6 +494,31 @@ async function copyClientConfiguration(): Promise<void> {
       configuration = undefined
     }
   })
+}
+
+async function copyOmpEnvironmentLine(): Promise<void> {
+  const clientID = activeClient.value
+  if (!ompSelectionReady.value) return
+  await withRevealedKey('omp-env', clientID, async (key, isCurrent) => {
+    if (!isCurrent()) return
+    return copy(`DEMERZEL_API_KEY=${key}`)
+  })
+}
+
+async function copyOmpVerificationCommand(): Promise<void> {
+  if (!ompSelectionReady.value) return
+  try {
+    const result = await copy(ompVerificationCommand)
+    if (result === 'success') setImmediateFeedback('omp-commands', 'success')
+  } catch {
+    setImmediateFeedback('omp-commands', 'failure')
+  }
+}
+
+function showOmpStage(stage: number): void {
+  if (actionBusy.value || stage < 1 || stage > ompStages.length) return
+  if (stage > 1 && !ompSelectionReady.value) return
+  ompStage.value = stage
 }
 
 async function openQuickImport(): Promise<void> {
@@ -584,7 +646,7 @@ onBeforeUnmount(() => {
 
         <div class="gateway-connection__panel-body">
           <div
-            v-if="activeClient === 'cc-switch' || currentClient.requiresModel"
+            v-if="sharedModelOptions"
             class="gateway-connection__model-options"
             :class="{ 'gateway-connection__model-options--single': activeClient !== 'cc-switch' }"
           >
@@ -638,7 +700,11 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <InlineFeedback v-if="!selectedKeySupportsClient" tone="warning" appearance="hint">
+          <InlineFeedback
+            v-if="!ompSetupActive && !selectedKeySupportsClient"
+            tone="warning"
+            appearance="hint"
+          >
             {{
               t('home.ledger.connection.protocolUnavailable', {
                 client: quickImportClientLabel,
@@ -662,11 +728,215 @@ onBeforeUnmount(() => {
             {{ t('home.ledger.connection.modelRequired') }}
           </InlineFeedback>
 
+          <!-- The browser cannot write OMP's config files, so guide the three stages instead. -->
+          <section
+            v-if="ompSetupActive"
+            class="gateway-connection__setup"
+            aria-labelledby="omp-setup-heading"
+          >
+            <ol
+              class="gateway-connection__setup-stages"
+              :aria-label="t('home.ledger.connection.ompSetup.stagesLabel')"
+            >
+              <li v-for="(stage, index) in ompStages" :key="stage">
+                <button
+                  class="gateway-connection__setup-stage"
+                  :class="{ 'gateway-connection__setup-stage--active': index + 1 === ompStage }"
+                  type="button"
+                  :disabled="actionBusy || (index > 0 && !ompSelectionReady)"
+                  :aria-current="index + 1 === ompStage ? 'step' : undefined"
+                  @click="showOmpStage(index + 1)"
+                >
+                  <span aria-hidden="true">
+                    {{ String(index + 1).padStart(2, '0') }}
+                  </span>
+                  {{ t(`home.ledger.connection.ompSetup.stageTitles.${stage}`) }}
+                </button>
+              </li>
+            </ol>
+
+            <div class="gateway-connection__setup-body">
+              <p class="gateway-connection__setup-progress" role="status">
+                {{
+                  t('home.ledger.connection.ompSetup.progress', {
+                    current: ompStage,
+                    total: ompStages.length,
+                  })
+                }}
+              </p>
+
+              <template v-if="ompStage === 1">
+                <h3 id="omp-setup-heading" class="gateway-connection__setup-heading">
+                  {{ t('home.ledger.connection.ompSetup.select.heading') }}
+                </h3>
+                <p class="gateway-connection__setup-lead">
+                  {{ t('home.ledger.connection.ompSetup.select.lead') }}
+                </p>
+
+                <div class="gateway-connection__setup-field">
+                  <span class="gateway-connection__label">
+                    {{ t('home.ledger.connection.ompSetup.select.keyCaption') }}
+                  </span>
+                  <InlineFeedback v-if="selectedKeySupportsClient" tone="success" appearance="hint">
+                    {{
+                      t('home.ledger.connection.ompSetup.select.keySupported', {
+                        key: selectedKey.name,
+                      })
+                    }}
+                  </InlineFeedback>
+                  <InlineFeedback v-else tone="warning" appearance="hint">
+                    {{
+                      t('home.ledger.connection.protocolUnavailable', {
+                        client: quickImportClientLabel,
+                        protocol: currentRequiredProtocol,
+                      })
+                    }}
+                  </InlineFeedback>
+                  <RouterLink
+                    v-if="!selfScoped && !selectedKeySupportsClient"
+                    class="button-link"
+                    :to="accessKeysLocation()"
+                  >
+                    {{ t('home.ledger.connection.createAccessKey') }}
+                  </RouterLink>
+                </div>
+
+                <div class="gateway-connection__setup-field">
+                  <span class="gateway-connection__label">
+                    {{ t('home.ledger.connection.ompSetup.select.modelsCaption') }}
+                  </span>
+                  <InlineFeedback v-if="ompExposedModelCount > 0" tone="success" appearance="hint">
+                    {{
+                      t('home.ledger.connection.ompSetup.select.modelsExposed', {
+                        count: ompExposedModelCount,
+                      })
+                    }}
+                  </InlineFeedback>
+                  <InlineFeedback v-else tone="warning" appearance="hint">
+                    {{ t('home.ledger.connection.ompSetup.select.noModels') }}
+                  </InlineFeedback>
+                </div>
+              </template>
+
+              <template v-else-if="ompStage === 2">
+                <h3 id="omp-setup-heading" class="gateway-connection__setup-heading">
+                  {{ t('home.ledger.connection.ompSetup.configure.heading') }}
+                </h3>
+                <p class="gateway-connection__setup-lead">
+                  {{ t('home.ledger.connection.ompSetup.configure.lead') }}
+                </p>
+
+                <div class="gateway-connection__setup-file">
+                  <p class="gateway-connection__setup-caption">
+                    <code>{{ t('home.ledger.connection.ompSetup.configure.modelsFile') }}</code>
+                    <span>{{ t('home.ledger.connection.ompSetup.configure.modelsCaption') }}</span>
+                  </p>
+                  <CodeBlock
+                    :code="maskedSnippet"
+                    :language="configurationLanguage"
+                    appearance="snippet"
+                  >
+                    <template #action>
+                      <CopyAction
+                        :label="t('home.ledger.connection.ompSetup.configure.copyModels')"
+                        :disabled="!ompSelectionReady || actionBusy"
+                        :busy="actionBusy"
+                        :state="configurationCopyState"
+                        @copy="copyClientConfiguration"
+                      />
+                    </template>
+                  </CodeBlock>
+                  <p class="gateway-connection__setup-hint">
+                    {{ t('home.ledger.connection.ompSetup.configure.modelsHint') }}
+                  </p>
+                </div>
+
+                <div class="gateway-connection__setup-file">
+                  <p class="gateway-connection__setup-caption">
+                    <code>{{ t('home.ledger.connection.ompSetup.configure.envFile') }}</code>
+                    <span>{{ t('home.ledger.connection.ompSetup.configure.envCaption') }}</span>
+                  </p>
+                  <div class="gateway-connection__setup-secret">
+                    <code>{{ t('home.ledger.connection.ompSetup.configure.envValue') }}</code>
+                    <CopyAction
+                      :label="t('home.ledger.connection.ompSetup.configure.copyEnv')"
+                      :disabled="!ompSelectionReady || actionBusy"
+                      :busy="actionBusy"
+                      :state="ompEnvironmentCopyState"
+                      @copy="copyOmpEnvironmentLine"
+                    />
+                  </div>
+                  <p class="gateway-connection__setup-hint">
+                    {{ t('home.ledger.connection.ompSetup.configure.envHint') }}
+                  </p>
+                  <p class="gateway-connection__setup-hint">
+                    {{ t('home.ledger.connection.ompSetup.configure.envSecretNote') }}
+                  </p>
+                </div>
+              </template>
+
+              <template v-else>
+                <h3 id="omp-setup-heading" class="gateway-connection__setup-heading">
+                  {{ t('home.ledger.connection.ompSetup.verify.heading') }}
+                </h3>
+                <p class="gateway-connection__setup-lead">
+                  {{ t('home.ledger.connection.ompSetup.verify.lead') }}
+                </p>
+
+                <div class="gateway-connection__setup-file">
+                  <CodeBlock :code="ompVerificationCommand" language="Shell" appearance="snippet">
+                    <template #action>
+                      <CopyAction
+                        :label="t('home.ledger.connection.ompSetup.verify.copyCommands')"
+                        :disabled="!ompSelectionReady || actionBusy"
+                        :busy="actionBusy"
+                        :state="ompCommandsCopyState"
+                        @copy="copyOmpVerificationCommand"
+                      />
+                    </template>
+                  </CodeBlock>
+                  <p class="gateway-connection__setup-hint">
+                    {{ t('home.ledger.connection.ompSetup.verify.emptyListHint') }}
+                  </p>
+                </div>
+
+                <p class="gateway-connection__setup-model">
+                  {{ t('home.ledger.connection.ompSetup.verify.modelSelection') }}
+                </p>
+
+                <InlineFeedback tone="info" appearance="hint">
+                  {{ t('home.ledger.connection.ompSetup.verify.loginHint') }}
+                </InlineFeedback>
+              </template>
+            </div>
+
+            <div class="gateway-connection__setup-nav">
+              <AppButton
+                variant="secondary"
+                size="compact"
+                :disabled="ompStage === 1 || actionBusy"
+                @click="showOmpStage(ompStage - 1)"
+              >
+                <ArrowLeft :size="14" aria-hidden="true" />
+                {{ t('home.ledger.connection.ompSetup.back') }}
+              </AppButton>
+              <AppButton
+                v-if="ompStage < ompStages.length"
+                size="compact"
+                :disabled="!ompSelectionReady || actionBusy"
+                @click="showOmpStage(ompStage + 1)"
+              >
+                {{ t('home.ledger.connection.ompSetup.next') }}
+                <ArrowRight :size="14" aria-hidden="true" />
+              </AppButton>
+            </div>
+          </section>
+
           <!--
             The configuration is on the left; the matching setup steps are on the
             right. Clients configured only through a GUI use the full row for steps.
           -->
-          <div class="gateway-connection__guide">
+          <div v-if="!ompSetupActive" class="gateway-connection__guide">
             <CodeBlock
               v-if="currentClient.configKind === 'snippet'"
               :code="maskedSnippet"
@@ -706,7 +976,7 @@ onBeforeUnmount(() => {
                       "
                       :disabled="!selectedKeySupportsClient || actionBusy"
                       :busy="field.secret ? actionBusy : false"
-                      :state="fieldCopyState(field.id)"
+                      :state="copyStateFor(field.id)"
                       @copy="copyField(field)"
                     />
                   </dd>
@@ -1118,6 +1388,175 @@ onBeforeUnmount(() => {
   color: var(--color-text-muted);
 }
 
+/*
+ * OMP guided setup. The stages share one column, so reuse the chip, caption and
+ * control metrics the rest of the connection panel already establishes.
+ */
+.gateway-connection__setup {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+.gateway-connection__setup-stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gateway-connection__setup-stage {
+  display: inline-flex;
+  min-height: var(--control-sm);
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: 0 13px;
+  font: inherit;
+  font-size: var(--text-button);
+  font-weight: 560;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--easing-standard),
+    background-color var(--duration-fast) var(--easing-standard),
+    color var(--duration-fast) var(--easing-standard);
+}
+
+.gateway-connection__setup-stage > span {
+  color: var(--color-text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-label-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.gateway-connection__setup-stage:hover:not(:disabled) {
+  border-color: var(--color-text-faint);
+}
+
+.gateway-connection__setup-stage:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.gateway-connection__setup-stage--active {
+  border-color: var(--color-action);
+  background: var(--color-action-soft);
+  color: var(--color-action);
+  font-weight: 620;
+}
+
+.gateway-connection__setup-stage--active > span {
+  color: var(--color-action);
+}
+
+.gateway-connection__setup-body {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+.gateway-connection__setup-progress {
+  margin: 0;
+  color: var(--color-text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-label-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.gateway-connection__setup-heading {
+  margin: 0;
+  font-size: var(--title-empty);
+  font-weight: 620;
+  letter-spacing: -0.01em;
+  line-height: var(--line-compact);
+}
+
+.gateway-connection__setup-lead,
+.gateway-connection__setup-hint {
+  max-width: 74ch;
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--line-editorial);
+}
+
+.gateway-connection__setup-field,
+.gateway-connection__setup-file {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.gateway-connection__setup-field :deep([data-input-shell]) {
+  min-height: var(--control-sm);
+  height: var(--control-sm);
+}
+
+.gateway-connection__setup-caption {
+  display: flex;
+  min-height: 24px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--color-text-faint);
+  font-size: var(--text-sm);
+}
+
+.gateway-connection__setup-caption code {
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.gateway-connection__setup-secret {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Matches the GUI connection values; the secret itself is never rendered. */
+.gateway-connection__setup-secret code {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-tag);
+  background: var(--color-surface-sunken);
+  color: var(--color-code);
+  padding: 7px 10px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gateway-connection__setup-model {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--line-editorial);
+}
+
+.gateway-connection__setup-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
 @media (max-width: 860px) {
   .gateway-connection__key {
     flex: 1 1 100%;
@@ -1135,7 +1574,8 @@ onBeforeUnmount(() => {
 /* Restore 44px touch targets on narrow screens after reducing desktop control height. */
 @media (max-width: 560px) {
   .gateway-connection__cc-switch-target :deep(.segmented-control__trigger),
-  .gateway-connection__model-picker :deep([data-input-shell]) {
+  .gateway-connection__model-picker :deep([data-input-shell]),
+  .gateway-connection__setup-field :deep([data-input-shell]) {
     min-height: var(--touch-target);
   }
 }
